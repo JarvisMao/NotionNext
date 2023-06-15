@@ -1,19 +1,54 @@
 import BLOG from '@/blog.config'
 import { getPostBlocks } from '@/lib/notion'
 import { getGlobalNotionData } from '@/lib/notion/getNotionData'
-import * as ThemeMap from '@/themes'
 import { useGlobal } from '@/lib/global'
+import { generateRss } from '@/lib/rss'
+import { generateRobotsTxt } from '@/lib/robots.txt'
+import dynamic from 'next/dynamic'
+import { Suspense, useEffect, useState } from 'react'
+import Loading from '@/components/Loading'
+
+const layout = 'LayoutIndex'
+
+/**
+ * 加载默认主题
+ */
+const DefaultLayout = dynamic(() => import(`@/themes/${BLOG.THEME}/${layout}`), { ssr: true })
+
+/**
+ * 首页布局
+ * @param {*} props
+ * @returns
+ */
 const Index = props => {
+  // 动态切换主题
   const { theme } = useGlobal()
-  const ThemeComponents = ThemeMap[theme]
-  return <ThemeComponents.LayoutIndex {...props} />
+  const [Layout, setLayout] = useState(DefaultLayout)
+  // 切换主题
+  useEffect(() => {
+    const loadLayout = async () => {
+      const newLayout = await dynamic(() => import(`@/themes/${theme}/${layout}`))
+      setLayout(newLayout)
+    }
+    loadLayout()
+  }, [theme])
+
+  return <Suspense fallback={<Loading />}>
+        <Layout {...props} />
+    </Suspense>
 }
 
+/**
+ * SSG 获取数据
+ * @returns
+ */
 export async function getStaticProps() {
   const from = 'index'
   const props = await getGlobalNotionData({ from })
+
   const { siteInfo } = props
   props.posts = props.allPages.filter(page => page.type === 'Post' && page.status === 'Published')
+
   const meta = {
     title: `${siteInfo?.title} | ${siteInfo?.description}`,
     description: siteInfo?.description,
@@ -39,12 +74,21 @@ export async function getStaticProps() {
     }
   }
 
+  // 生成robotTxt
+  generateRobotsTxt()
+  // 生成Feed订阅
+  if (JSON.parse(BLOG.ENABLE_RSS)) {
+    generateRss(props?.latestPosts || [])
+  }
+
+  delete props.allPages
+
   return {
     props: {
       meta,
       ...props
     },
-    revalidate: 5
+    revalidate: parseInt(BLOG.NEXT_REVALIDATE_SECOND)
   }
 }
 
